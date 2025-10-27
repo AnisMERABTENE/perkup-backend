@@ -48,3 +48,4 @@ serverless.yml.backup
 # Fichiers de déploiement temporaires
 *.zip
 *.tar.gz
+.env.production
