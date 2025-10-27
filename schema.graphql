@@ -1,0 +1,55 @@
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+type Query {
+  _empty: String
+}
+
+type Mutation {
+  registerClient(input: RegisterInput!): MessageResponse!
+  registerVendor(input: RegisterInput!): MessageResponse!
+  verifyEmail(input: VerifyEmailInput!): MessageResponse!
+  login(input: LoginInput!): LoginResponse!
+}
+
+# 🔹 Inputs
+input RegisterInput {
+  firstname: String!
+  lastname: String!
+  email: String!
+  password: String!
+  confirmPassword: String!
+}
+
+input VerifyEmailInput {
+  email: String!
+  code: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+# 🔹 Types de réponse
+type MessageResponse {
+  message: String!
+}
+
+type LoginResponse {
+  message: String!
+  token: String
+  user: User!
+  needsSetup: Boolean!
+  redirectTo: String!
+}
+
+type User {
+  id: ID!
+  firstname: String!
+  lastname: String!
+  email: String!
+  role: String!
+}

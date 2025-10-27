@@ -1,0 +1,46 @@
+# Schéma GraphQL Auth (AppSync)
+
+type Mutation {
+  registerClient(input: RegisterInput!): MessageResponse!
+  registerVendor(input: RegisterInput!): MessageResponse!
+  verifyEmail(input: VerifyEmailInput!): MessageResponse!
+  login(input: LoginInput!): LoginResponse!
+}
+
+input RegisterInput {
+  firstname: String!
+  lastname: String!
+  email: String!
+  password: String!
+  confirmPassword: String!
+}
+
+input VerifyEmailInput {
+  email: String!
+  code: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+type MessageResponse {
+  message: String!
+}
+
+type UserResponse {
+  id: ID!
+  firstname: String!
+  lastname: String!
+  email: String!
+  role: String!
+}
+
+type LoginResponse {
+  message: String!
+  token: String!
+  user: UserResponse!
+  needsSetup: Boolean!
+  redirectTo: String!
+}

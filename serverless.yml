@@ -1,0 +1,519 @@
+service: perkup-backend-v2
+
+useDotenv: true
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-warmup
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: eu-west-1
+  
+  # 🔥 CONFIGURATION VPC pour accès Redis
+  vpc:
+    securityGroupIds:
+      - Ref: LambdaSecurityGroup
+    subnetIds:
+      - Ref: PrivateSubnetA
+      - Ref: PrivateSubnetB
+  
+  # 🔥 OPTIMISATIONS CRITIQUES POUR 50K USERS
+  environment:
+    MONGO_URI: ${env:MONGO_URI}
+    JWT_SECRET: ${env:JWT_SECRET}
+    EMAIL_SOURCE: ${env:EMAIL_SOURCE}
+    SES_REGION: ${env:SES_REGION}
+    
+    # Cloudinary Configuration
+    CLOUDINARY_CLOUD_NAME: ${env:CLOUDINARY_CLOUD_NAME}
+    CLOUDINARY_API_KEY: ${env:CLOUDINARY_API_KEY}
+    CLOUDINARY_API_SECRET: ${env:CLOUDINARY_API_SECRET}
+    
+    # Stripe Configuration
+    STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
+    STRIPE_PRICE_BASIC: ${env:STRIPE_PRICE_BASIC}
+    STRIPE_PRICE_SUPER: ${env:STRIPE_PRICE_SUPER}
+    STRIPE_PRICE_PREMIUM: ${env:STRIPE_PRICE_PREMIUM}
+    STRIPE_WEBHOOK_SECRET: ${env:STRIPE_WEBHOOK_SECRET}
+    
+    # Cache distribué Phase 3 avec ElastiCache
+    REDIS_CLUSTER_ENDPOINT:
+      Fn::GetAtt: [RedisCluster, RedisEndpoint.Address]
+    REDIS_HOST:
+      Fn::GetAtt: [RedisCluster, RedisEndpoint.Address]
+    REDIS_PORT: "6379"
+    CACHE_ENABLED: "true"
+    ENABLE_DYNAMODB_CACHE: "true"
+    DYNAMODB_CACHE_TABLE: "perkup-user-cache"
+    
+    # Performance Phase 2 & 3
+    NODE_ENV: ${env:NODE_ENV, 'development'}  # Utilise .env ou default à development
+    CONNECTION_POOL_SIZE: 100
+    CACHE_STRATEGY: multi_layer
+    MONITORING_ENABLED: true
+    
+    # Rate limiting sécurisé
+    RATE_LIMIT_GLOBAL: 10000  # Réduit pour éviter les abus
+    RATE_LIMIT_PER_USER: 500   # Réduit pour éviter les abus
+    
+  # 🚀 IAM optimisé pour haute performance
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:Scan
+      Resource: 
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/perkup-*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/perkup-*/index/*"
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+      Resource: 
+        - "arn:aws:sqs:${self:provider.region}:*:perkup-*"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+        - sns:Subscribe
+        - sns:Unsubscribe
+      Resource: 
+        - "arn:aws:sns:${self:provider.region}:*:perkup-*"
+    - Effect: Allow
+      Action:
+        - execute-api:ManageConnections
+      Resource:
+        - "arn:aws:execute-api:${self:provider.region}:*:*/*/*/*"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+      Resource: "*"
+
+functions:
+  # 🔥 FONCTION GRAPHQL HAUTE PERFORMANCE (Phase 1 complète)
+  graphql:
+    handler: src/graphqlHandler.handler  # Garde le handler existant optimisé Phase 2
+    timeout: 30
+    memorySize: 1024  # Réduit pour éviter les coûts
+    warmup:
+      default:
+        enabled: false
+    environment:
+      CONNECTION_POOL_SIZE: 100  # Phase 2
+      CACHE_STRATEGY: multi_layer  # Phase 3
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+  # 🔥 WEBSOCKET POUR TEMPS RÉEL (Phase 1)
+  websocketConnect:
+    handler: src/handlers/websocket/connectHandler.handler
+    timeout: 30
+    memorySize: 256
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: "perkup-websocket-connections"
+    events:
+      - websocket:
+          route: $connect
+  
+  websocketDisconnect:
+    handler: src/handlers/websocket/disconnectHandler.handler
+    timeout: 30
+    memorySize: 256
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: "perkup-websocket-connections"
+    events:
+      - websocket:
+          route: $disconnect
+          
+  websocketMessage:
+    handler: src/handlers/websocket/messageHandler.handler
+    timeout: 30
+    memorySize: 512
+    environment:
+      WEBSOCKET_CONNECTIONS_TABLE: "perkup-websocket-connections"
+    events:
+      - websocket:
+          route: $default
+
+  # 🛡️ RATE LIMITING DISTRIBUÉE (Phase 1)
+  rateLimiter:
+    handler: src/handlers/security/rateLimiterHandler.handler
+    timeout: 30
+    memorySize: 256
+    environment:
+      CACHE_ENABLED: true
+
+  # Webhook Stripe pour les abonnements (CONSERVÉ)
+  stripeWebhook:
+    handler: src/handlers/subscription/webhookHandler.handler
+    timeout: 30
+    memorySize: 1024
+    events:
+      - http:
+          path: webhook/stripe
+          method: post
+          cors: false
+
+# 🔥 RESSOURCES AWS OPTIMISÉES (Phase 1 complète)
+resources:
+  Resources:
+    # 🚀 VPC pour Redis ElastiCache
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+        Tags:
+          - Key: Name
+            Value: perkup-vpc
+
+    # Subnets privés pour Redis
+    PrivateSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.1.0/24
+        AvailabilityZone: ${self:provider.region}a
+        Tags:
+          - Key: Name
+            Value: perkup-private-a
+
+    PrivateSubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.2.0/24
+        AvailabilityZone: ${self:provider.region}b
+        Tags:
+          - Key: Name
+            Value: perkup-private-b
+
+    # Security Group pour Redis
+    RedisSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Redis cluster
+        VpcId: !Ref VPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        Tags:
+          - Key: Name
+            Value: perkup-redis-sg
+
+    # Security Group pour Lambda
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Lambda functions
+        VpcId: !Ref VPC
+        SecurityGroupEgress:
+          - IpProtocol: -1
+            CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: perkup-lambda-sg
+
+    # Subnet Group pour ElastiCache
+    RedisSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: Subnet group for Redis cluster
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+
+    # 🔥 REDIS ELASTICACHE CLUSTER
+    RedisCluster:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        CacheNodeType: cache.t3.micro  # Économique pour commencer
+        Engine: redis
+        NumCacheNodes: 1
+        Port: 6379
+        VpcSecurityGroupIds:
+          - !Ref RedisSecurityGroup
+        CacheSubnetGroupName: !Ref RedisSubnetGroup
+        Tags:
+          - Key: Name
+            Value: perkup-redis
+
+    # NAT Gateway pour accès internet depuis Lambda
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+          - Key: Name
+            Value: perkup-igw
+
+    VPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref InternetGateway
+
+    # Subnet publique pour NAT
+    PublicSubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.3.0/24
+        AvailabilityZone: ${self:provider.region}a
+        MapPublicIpOnLaunch: true
+        Tags:
+          - Key: Name
+            Value: perkup-public
+
+    NATGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt EIPForNAT.AllocationId
+        SubnetId: !Ref PublicSubnet
+        Tags:
+          - Key: Name
+            Value: perkup-nat
+
+    EIPForNAT:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+
+    # Route Tables
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+        Tags:
+          - Key: Name
+            Value: perkup-public-rt
+
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+        Tags:
+          - Key: Name
+            Value: perkup-private-rt
+
+    PublicRoute:
+      Type: AWS::EC2::Route
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref InternetGateway
+
+    PrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NATGateway
+
+    # Associations
+    PublicSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PublicSubnet
+        RouteTableId: !Ref PublicRouteTable
+
+    PrivateSubnetARouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetA
+        RouteTableId: !Ref PrivateRouteTable
+
+    PrivateSubnetBRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetB
+        RouteTableId: !Ref PrivateRouteTable
+    # 🚀 DynamoDB pour cache haute performance
+    UserCacheTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: perkup-user-cache
+        BillingMode: PAY_PER_REQUEST  # Corrigé: PAY_PER_REQUEST au lieu de ON_DEMAND
+        AttributeDefinitions:
+          - AttributeName: cacheKey
+            AttributeType: S
+          - AttributeName: type
+            AttributeType: S
+        KeySchema:
+          - AttributeName: cacheKey
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: TypeIndex
+            KeySchema:
+              - AttributeName: type
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    # 🔥 TABLE WEBSOCKET CONNECTIONS
+    WebSocketConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: perkup-websocket-connections
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    # 🚀 SNS pour notifications distribuées
+    NotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: perkup-notifications
+        DisplayName: Perkup Notifications
+
+    # 🔥 CloudWatch Dashboard pour monitoring
+    MonitoringDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: perkup-performance-${opt:stage, 'dev'}  # Utilise le stage dans le nom
+        DashboardBody:
+          Fn::Sub: |
+            {
+              "widgets": [
+                {
+                  "type": "metric",
+                  "properties": {
+                    "metrics": [
+                      ["AWS/Lambda", "Duration", "FunctionName", "${AWS::StackName}-graphql"],
+                      ["AWS/Lambda", "Errors", "FunctionName", "${AWS::StackName}-graphql"],
+                      ["AWS/Lambda", "Invocations", "FunctionName", "${AWS::StackName}-graphql"]
+                    ],
+                    "period": 300,
+                    "stat": "Average",
+                    "region": "${AWS::Region}",
+                    "title": "GraphQL Performance"
+                  }
+                }
+              ]
+            }
+
+    # 🚀 CloudWatch Alarms
+    GraphQLErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: perkup-graphql-errors-dev
+        AlarmDescription: GraphQL function errors
+        MetricName: Errors
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 2
+        Threshold: 10
+        ComparisonOperator: GreaterThanThreshold
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: GraphqlLambdaFunction
+        AlarmActions:
+          - Ref: NotificationTopic
+
+    GraphQLDurationAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: perkup-graphql-duration-dev
+        AlarmDescription: GraphQL function duration
+        MetricName: Duration
+        Namespace: AWS/Lambda
+        Statistic: Average
+        Period: 300
+        EvaluationPeriods: 2
+        Threshold: 10000
+        ComparisonOperator: GreaterThanThreshold
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: GraphqlLambdaFunction
+        AlarmActions:
+          - Ref: NotificationTopic
+
+
+
+
+
+custom:
+  # 🔥 WARMUP CONFIGURATION (Phase 1 complète)
+  warmup:
+    default:
+      enabled: false
+      events:
+        - schedule: rate(5 minutes)
+      timeout: 20
+      prewarm: true
+      concurrency: 2  # Réduit pour éviter trop de fonctions
+      
+  # Configuration offline pour dev
+  serverless-offline:
+    httpPort: 4000
+    
+
+
+# Outputs pour référence
+outputs:
+  GraphQLEndpoint:
+    Description: GraphQL API endpoint
+    Value:
+      Fn::Sub: "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/graphql"
+    
+  RedisEndpoint:
+    Description: Redis ElastiCache endpoint
+    Value:
+      Fn::GetAtt: [RedisCluster, RedisEndpoint.Address]
+    
+  DynamoDBCacheTable:
+    Description: DynamoDB cache table
+    Value:
+      Ref: UserCacheTable
