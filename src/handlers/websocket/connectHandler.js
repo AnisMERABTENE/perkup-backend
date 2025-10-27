@@ -22,8 +22,9 @@ const verifyToken = (token) => {
 export const handler = async (event) => {
   console.log('🔌 WebSocket $connect event:', JSON.stringify(event, null, 2));
   
-  const { connectionId, requestContext } = event;
-  const { domainName, stage } = requestContext;
+  // ✅ CORRECTION : connectionId est dans requestContext
+  const { requestContext } = event;
+  const { connectionId, domainName, stage } = requestContext;
   
   try {
     // Récupérer le token depuis les query parameters

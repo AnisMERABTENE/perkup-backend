@@ -198,53 +198,132 @@ export const getPartnersHandler = async (event) => {
   }
 };
 
-// Détail d'un partenaire
+// 🔥 DÉTAIL D'UN PARTENAIRE AVEC CACHE PARTAGÉ PAR PLAN UTILISATEUR - OPTIMISÉ
 export const getPartnerHandler = async (event) => {
   const { id } = event.args;
   const userId = event.context.user.id;
   
   try {
-    const partner = await PartnerCache.getPartner(id);
+    console.log(`🔍 getPartnerHandler: partnerId=${id}, userId=${userId}`);
     
-    if (!partner) {
-      throw new Error('Partenaire introuvable');
-    }
-    
-    if (!partner.isActive) {
-      throw new Error('Ce partenaire n\'est plus disponible');
-    }
-    
-    // Récupérer le plan utilisateur
+    // 🎯 ÉTAPE 1: Récupérer le plan utilisateur en PREMIER (optimisé avec cache)
     const subscriptionFeatures = await SubscriptionCache.getSubscriptionFeatures(userId);
     const userPlan = subscriptionFeatures?.isActive ? subscriptionFeatures.plan : 'free';
-    const finalDiscount = calculateUserDiscount(partner.discount, userPlan);
     
-    return {
-      id: partner._id,
-      name: partner.name,
-      category: partner.category,
-      address: partner.address,
-      city: partner.city,
-      zipCode: partner.zipCode,
-      logo: partner.logo,
-      description: partner.description,
-      phone: partner.phone,
-      website: partner.website,
-      location: partner.location ? {
-        latitude: partner.location.coordinates[1],
-        longitude: partner.location.coordinates[0]
-      } : null,
-      offeredDiscount: partner.discount,
-      userDiscount: finalDiscount,
-      isPremiumOnly: partner.discount > 15,
-      userPlan: userPlan,
-      canAccessFullDiscount: userPlan === "premium" || partner.discount <= (userPlan === "super" ? 10 : userPlan === "basic" ? 5 : 0),
-      needsSubscription: userPlan === "free" && partner.discount > 0,
-      createdAt: partner.createdAt,
-      updatedAt: partner.updatedAt
-    };
+    console.log(`👤 Plan utilisateur: ${userPlan}`);
+    
+    // 🔥 ÉTAPE 2: Cache partagé par plan utilisateur - CLÉ INTELLIGENTE
+    const cacheKey = `partner_detail:${id}:${userPlan}`;
+    
+    console.log(`🔑 Clé de cache partagé: ${cacheKey}`);
+    
+    // Essayer de récupérer depuis le cache partagé
+    const cachedPartnerDetail = await cacheService.getOrSet(
+      cacheKey,
+      'partners',
+      async () => {
+        console.log(`💾 Cache MISS pour partner ${id} plan ${userPlan} - Génération des données`);
+        
+        // 🎯 Récupérer le partenaire - SOIT par ID MongoDB SOIT par nom
+        let partner;
+        
+        // Vérifier si c'est un ID MongoDB valide (24 caractères hexadécimaux)
+        const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+        
+        if (isValidObjectId) {
+          // Recherche par ID MongoDB
+          console.log(`🔑 Recherche par ID MongoDB: ${id}`);
+          partner = await PartnerCache.getPartner(id);
+        } else {
+          // Recherche par nom (slug décodé)
+          const partnerName = decodeURIComponent(id).replace(/-/g, ' ');
+          console.log(`📝 Recherche par nom: ${partnerName}`);
+          
+          // Recherche directe dans la base de données par nom
+          const partnerFromDB = await Partner.findOne({ 
+            name: { $regex: new RegExp(`^${partnerName}$`, 'i') },
+            isActive: true 
+          });
+          
+          if (partnerFromDB) {
+            partner = {
+              ...partnerFromDB.toObject(),
+              _id: partnerFromDB._id.toString()
+            };
+          }
+        }
+        
+        if (!partner) {
+          throw new Error('Partenaire introuvable');
+        }
+        
+        if (!partner.isActive) {
+          throw new Error('Ce partenaire n\'est plus disponible');
+        }
+        
+        // Calculer les données adaptées au plan utilisateur
+        const finalDiscount = calculateUserDiscount(partner.discount, userPlan);
+        
+        const partnerDetail = {
+          id: partner._id,
+          name: partner.name,
+          category: partner.category,
+          address: partner.address,
+          city: partner.city,
+          zipCode: partner.zipCode,
+          logo: partner.logo,
+          description: partner.description,
+          phone: partner.phone,
+          website: partner.website,
+          location: partner.location ? {
+            latitude: partner.location.coordinates[1],
+            longitude: partner.location.coordinates[0]
+          } : null,
+          offeredDiscount: partner.discount,
+          userDiscount: finalDiscount,
+          isPremiumOnly: partner.discount > 15,
+          userPlan: userPlan,
+          canAccessFullDiscount: userPlan === "premium" || partner.discount <= (userPlan === "super" ? 10 : userPlan === "basic" ? 5 : 0),
+          needsSubscription: userPlan === "free" && partner.discount > 0,
+          createdAt: partner.createdAt,
+          updatedAt: partner.updatedAt,
+          // ✅ Métadonnées de cache pour debug
+          _cacheInfo: {
+            generatedAt: new Date().toISOString(),
+            forPlan: userPlan,
+            cacheKey: cacheKey,
+            source: 'DB_GENERATION',
+            searchMethod: isValidObjectId ? 'BY_ID' : 'BY_NAME'
+          }
+        };
+        
+        console.log(`✅ Données générées pour plan ${userPlan}:`, {
+          partnerId: id,
+          partnerName: partner.name,
+          originalDiscount: partner.discount,
+          userDiscount: finalDiscount,
+          userPlan,
+          searchMethod: isValidObjectId ? 'BY_ID' : 'BY_NAME'
+        });
+        
+        return partnerDetail;
+      },
+      1800 // TTL: 30 minutes - Cache partagé entre users du même plan
+    );
+    
+    // Mettre à jour les métadonnées si c'était un cache hit
+    if (cachedPartnerDetail._cacheInfo && cachedPartnerDetail._cacheInfo.source === 'DB_GENERATION') {
+      console.log(`🎯 Cache HIT: Partner ${id} pour plan ${userPlan} depuis cache partagé`);
+      cachedPartnerDetail._cacheInfo.source = 'SHARED_CACHE_HIT';
+      cachedPartnerDetail._cacheInfo.retrievedAt = new Date().toISOString();
+    }
+    
+    console.log(`✅ Partner detail ${id} pour plan ${userPlan} retourné`);
+    
+    return cachedPartnerDetail;
+    
   } catch (error) {
-    console.error('Erreur détail partenaire:', error);
+    console.error('❌ Erreur récupération partenaire:', error);
     throw error;
   }
 };

@@ -7,7 +7,8 @@ const dynamodb = new AWS.DynamoDB.DocumentClient();
  * Nettoie les connexions WebSocket fermées
  */
 export const handler = async (event) => {
-  const { connectionId } = event;
+  // ✅ CORRECTION : connectionId est dans requestContext
+  const connectionId = event.requestContext.connectionId;
   
   console.log(`🔌 WebSocket déconnexion: ${connectionId}`);
   

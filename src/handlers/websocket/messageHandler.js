@@ -7,7 +7,9 @@ const dynamodb = new AWS.DynamoDB.DocumentClient();
  * Gère les messages entrants des clients WebSocket
  */
 export const handler = async (event) => {
-  const { connectionId, body } = event;
+  // ✅ CORRECTION : connectionId est dans requestContext
+  const connectionId = event.requestContext.connectionId;
+  const { body } = event;
   
   console.log(`📨 Message WebSocket reçu de ${connectionId}:`, body);
   

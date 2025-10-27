@@ -49,6 +49,17 @@ const partnerTypeDefs = `
     website: String
     createdAt: String!
     updatedAt: String!
+    _cacheInfo: CacheInfo
+  }
+  
+  # 🚀 Type pour les métadonnées de cache
+  type CacheInfo {
+    generatedAt: String!
+    forPlan: String!
+    cacheKey: String!
+    source: String!
+    retrievedAt: String
+    searchMethod: String
   }
   
   type PartnerSearchResponse {
