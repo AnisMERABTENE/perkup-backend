@@ -271,6 +271,7 @@ export const getPartnerHandler = async (event) => {
           address: partner.address,
           city: partner.city,
           zipCode: partner.zipCode,
+          discount: partner.discount,
           logo: partner.logo,
           description: partner.description,
           phone: partner.phone,

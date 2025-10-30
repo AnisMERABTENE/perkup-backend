@@ -213,13 +213,21 @@ export class PartnerCache {
   
   // Invalidation après modification
   static async invalidatePartner(partnerId, vendorId = null) {
+    console.log(`🔥 DÉBUT INVALIDATION CACHE - partnerId: ${partnerId}, vendorId: ${vendorId}`);
+    
     await Promise.all([
       cacheService.del(partnerId, 'partners'),
       vendorId ? cacheService.del(`vendor:${vendorId}`, 'partners') : Promise.resolve(),
-      // cacheService.invalidatePattern('search:*', 'partners'), // ❌ Fonction inexistante
-      // cacheService.invalidatePattern('geo:*', 'geo'), // ❌ Fonction inexistante
+      // 🔥 INVALIDATION CACHE GLOBAL PARTENAIRES - CORRECTION CRITIQUE
+      cacheService.del('all_partners:v2', 'partners'),
       cacheService.del('all_categories', 'partners')
     ]);
+    
+    console.log(`✅ INVALIDATION CACHE TERMINÉE - Clés supprimées:`);
+    console.log(`- ${partnerId} (partners)`);
+    if (vendorId) console.log(`- vendor:${vendorId} (partners)`);
+    console.log(`- all_partners:v2 (partners) <- CLÉ PRINCIPALE`);
+    console.log(`- all_categories (partners)`);
   }
   
   // Labels des catégories

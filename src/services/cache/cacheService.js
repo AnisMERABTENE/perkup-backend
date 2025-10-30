@@ -1,19 +1,19 @@
-import { Cluster } from 'ioredis';
+import Redis from 'ioredis';
 import AWS from 'aws-sdk';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 /**
- * 🚀 CACHE MULTI-COUCHES HAUTE PERFORMANCE - PHASE 3 COMPLÈTE
+ * 🚀 CACHE MULTI-COUCHES - REDIS SIMPLE (CORRIGÉ !)
  * Layer 1: In-Memory (Lambda)
- * Layer 2: Redis Cluster (ElastiCache)
+ * Layer 2: Redis Simple ElastiCache (1 node)
  * Layer 3: DynamoDB (Persistence)
  */
 class DistributedCacheSystem {
   constructor() {
     this.memoryCache = new Map();         // L1: Cache mémoire
-    this.redisCluster = null;            // L2: Redis cluster
+    this.redisClient = null;              // L2: Redis SIMPLE (pas cluster)
     this.dynamoDB = new AWS.DynamoDB.DocumentClient(); // L3: DynamoDB
     
     this.maxMemorySize = 100 * 1024 * 1024; // 100MB max en mémoire
@@ -55,8 +55,8 @@ class DistributedCacheSystem {
    */
   async checkRateLimit(identifier, limit = 1000, window = 3600) {
     try {
-      const redisCluster = await this.initializeRedisCluster();
-      if (!redisCluster) {
+      const redisClient = await this.initializeRedisCluster();
+      if (!redisClient) {
         // Fallback sans Redis - permettre la requête
         return { allowed: true, remaining: limit, current: 0 };
       }
@@ -64,7 +64,7 @@ class DistributedCacheSystem {
       const key = this.buildKey(identifier, 'rate');
       
       // Pipeline pour atomicité
-      const pipeline = redisCluster.pipeline();
+      const pipeline = redisClient.pipeline();
       pipeline.incr(key);
       pipeline.expire(key, window);
       
@@ -82,117 +82,125 @@ class DistributedCacheSystem {
   }
 
   /**
-   * 🚀 INITIALISATION DU CLUSTER REDIS
+   * 🚀 INITIALISATION REDIS SIMPLE (ENFIN CORRIGÉ !)
    */
   async initializeRedisCluster() {
-    if (this.redisCluster) return this.redisCluster;
+    if (this.redisClient) return this.redisClient;
 
     try {
-      console.log('🔄 Redis Cluster: Initialisation...');
+      console.log('🔄 Redis Simple ElastiCache: Initialisation...');
       
-      // Configuration cluster Redis pour haute charge
-      const clusterNodes = [
-        {
-          host: process.env.REDIS_CLUSTER_ENDPOINT || 'localhost',
-          port: parseInt(process.env.REDIS_PORT) || 6379
-        }
-      ];
-
-      this.redisCluster = new Cluster(clusterNodes, {
-        // 🔥 OPTIMISATIONS CLUSTER
-        scaleReads: 'slave',           // Lecture sur slaves
+      // 🔥 CORRECTION: Redis SIMPLE au lieu de Cluster
+      this.redisClient = new Redis({
+        host: process.env.REDIS_CLUSTER_ENDPOINT || process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT) || 6379,
+        password: process.env.REDIS_PASSWORD || undefined,
+        
+        // 🔥 OPTIMISATIONS REDIS SIMPLE
         maxRetriesPerRequest: 3,
         retryDelayOnFailover: 100,
         enableOfflineQueue: false,
         
         // Pool de connexions
         lazyConnect: true,
-        maxRetriesPerRequest: 3,
         
         // Optimisations réseau
         connectTimeout: 10000,
         commandTimeout: 5000,
         
-        // Cluster options
-        enableReadyCheck: true,
-        redisOptions: {
-          password: process.env.REDIS_PASSWORD || undefined,
-          connectTimeout: 10000,
-          commandTimeout: 5000,
-          keyPrefix: 'perkup:'
-        }
+        keyPrefix: 'perkup:',
+        
+        // 🔥 MODE SIMPLE (pas cluster)
+        enableReadyCheck: true
       });
 
       // Event listeners
-      this.redisCluster.on('ready', () => {
-        console.log('✅ Redis Cluster connecté');
+      this.redisClient.on('ready', () => {
+        console.log('✅ Redis Simple ElastiCache connecté !');
       });
 
-      this.redisCluster.on('error', (err) => {
-        console.error('❌ Redis Cluster erreur:', err.message);
+      this.redisClient.on('error', (err) => {
+        console.error('❌ Redis Simple erreur:', err.message);
         this.metrics.errors++;
       });
 
-      await this.redisCluster.ping();
-      return this.redisCluster;
+      // Test de connexion
+      const pingResult = await this.redisClient.ping();
+      console.log('🎯 Redis Simple PING successful:', pingResult);
+      return this.redisClient;
 
     } catch (error) {
-      console.error('💥 Échec connexion Redis Cluster:', error);
-      // Graceful degradation - Continuer sans cache Redis
-      console.log('⚠️ Redis Cluster indisponible - Mode dégradé activé');
+      console.error('💥 Échec connexion Redis Simple:', error);
+      console.log('⚠️ Redis Simple indisponible - Mode dégradé activé');
       return null;
     }
   }
 
   /**
-   * 🔥 GET AVEC STRATÉGIE MULTI-COUCHES
+   * 🔥 GET AVEC STRATÉGIE MULTI-COUCHES RESPECTÉE
    */
   async get(key, type = 'user') {
     const startTime = Date.now();
     
     try {
-      // 🚀 LAYER 1: Cache mémoire (le plus rapide)
-      const memoryResult = this.getFromMemory(key);
-      if (memoryResult !== null) {
-        this.metrics.hits.l1++;
-        this.recordLatency('l1', Date.now() - startTime);
-        console.log(`🎯 Cache L1 HIT: ${key}`);
-        return memoryResult;
+      // Déterminer la stratégie de cache selon le type
+      const strategy = this.getCacheStrategy(type);
+      
+      // 🚀 LAYER 1: Cache mémoire (seulement si autorisé par la stratégie)
+      if (strategy.memory) {
+        const memoryResult = this.getFromMemory(key);
+        if (memoryResult !== null) {
+          this.metrics.hits.l1++;
+          this.recordLatency('l1', Date.now() - startTime);
+          console.log(`🎯 Cache L1 HIT: ${key}`);
+          return memoryResult;
+        }
       }
 
-      // 🚀 LAYER 2: Redis Cluster
-      const redisCluster = await this.initializeRedisCluster();
-      if (redisCluster) {
-        try {
-          const redisKey = this.buildKey(key, type);
-          const redisResult = await redisCluster.get(redisKey);
-          
-          if (redisResult) {
-            const parsed = JSON.parse(redisResult);
-            // Mettre en cache L1 pour les prochains accès
-            this.setInMemory(key, parsed);
-            this.metrics.hits.l2++;
-            this.recordLatency('l2', Date.now() - startTime);
-            console.log(`🎯 Cache L2 HIT: ${redisKey}`);
-            return parsed;
+      // 🚀 LAYER 2: Redis Simple (si autorisé par la stratégie)
+      if (strategy.redis) {
+        const redisClient = await this.initializeRedisCluster();
+        if (redisClient) {
+          try {
+            const redisKey = this.buildKey(key, type);
+            const redisResult = await redisClient.get(redisKey);
+            
+            if (redisResult) {
+              const parsed = JSON.parse(redisResult);
+              // Mettre en cache L1 seulement si autorisé par la stratégie
+              if (strategy.memory) {
+                this.setInMemory(key, parsed);
+              }
+              this.metrics.hits.l2++;
+              this.recordLatency('l2', Date.now() - startTime);
+              console.log(`🎯 Cache L2 HIT: ${redisKey}`);
+              return parsed;
+            }
+          } catch (redisError) {
+            console.error('❌ Redis Simple GET erreur:', redisError.message);
           }
-        } catch (redisError) {
-          console.error('❌ Redis Cluster GET erreur:', redisError.message);
         }
       }
 
-      // 🚀 LAYER 3: DynamoDB (fallback)
-      const dynamoResult = await this.getFromDynamoDB(key, type);
-      if (dynamoResult) {
-        // Remonter dans les couches supérieures
-        if (redisCluster) {
-          await this.setInRedis(this.buildKey(key, type), dynamoResult, type);
+      // 🚀 LAYER 3: DynamoDB (si autorisé par la stratégie)
+      if (strategy.dynamo) {
+        const dynamoResult = await this.getFromDynamoDB(key, type);
+        if (dynamoResult) {
+          // Remonter dans les couches supérieures selon la stratégie
+          if (strategy.redis) {
+            const redisClient = await this.initializeRedisCluster();
+            if (redisClient) {
+              await this.setInRedis(this.buildKey(key, type), dynamoResult, type);
+            }
+          }
+          if (strategy.memory) {
+            this.setInMemory(key, dynamoResult);
+          }
+          this.metrics.hits.l3++;
+          this.recordLatency('l3', Date.now() - startTime);
+          console.log(`🎯 Cache L3 HIT: ${key}`);
+          return dynamoResult;
         }
-        this.setInMemory(key, dynamoResult);
-        this.metrics.hits.l3++;
-        this.recordLatency('l3', Date.now() - startTime);
-        console.log(`🎯 Cache L3 HIT: ${key}`);
-        return dynamoResult;
       }
 
       // Aucune donnée trouvée
@@ -226,8 +234,8 @@ class DistributedCacheSystem {
 
       // 🚀 LAYER 2: Redis pour distribution
       if (strategy.redis) {
-        const redisCluster = await this.initializeRedisCluster();
-        if (redisCluster) {
+        const redisClient = await this.initializeRedisCluster();
+        if (redisClient) {
           const redisKey = this.buildKey(key, type);
           await this.setInRedis(redisKey, value, type);
         }
@@ -257,9 +265,9 @@ class DistributedCacheSystem {
       user: { memory: true, redis: true, dynamo: true },
       auth: { memory: true, redis: true, dynamo: false },
       
-      // Données fréquentes: mémoire + redis
+      // Données fréquentes: mémoire + redis SEULEMENT
       subscription: { memory: true, redis: true, dynamo: false },
-      partners: { memory: false, redis: true, dynamo: true },
+      partners: { memory: false, redis: true, dynamo: false }, // 🔥 DÉSACTIVÉ DYNAMO
       
       // Données statiques: toutes les couches avec TTL long
       geo: { memory: false, redis: true, dynamo: true },
@@ -333,11 +341,11 @@ class DistributedCacheSystem {
    */
   async setInRedis(key, value, type) {
     try {
-      const redisCluster = await this.initializeRedisCluster();
-      if (!redisCluster) return false;
+      const redisClient = await this.initializeRedisCluster();
+      if (!redisClient) return false;
       
       const ttl = this.ttlConfig[type] || this.ttlConfig.user;
-      const pipeline = redisCluster.pipeline();
+      const pipeline = redisClient.pipeline();
       
       pipeline.setex(key, ttl, JSON.stringify(value));
       
@@ -413,13 +421,13 @@ class DistributedCacheSystem {
       }
 
       // Invalider Redis
-      const redisCluster = await this.initializeRedisCluster();
-      if (redisCluster) {
+      const redisClient = await this.initializeRedisCluster();
+      if (redisClient) {
         const searchPattern = this.buildKey(pattern + '*', type);
-        const keys = await redisCluster.keys(searchPattern);
+        const keys = await redisClient.keys(searchPattern);
         
         if (keys.length > 0) {
-          const pipeline = redisCluster.pipeline();
+          const pipeline = redisClient.pipeline();
           keys.forEach(key => pipeline.del(key));
           await pipeline.exec();
         }
@@ -440,7 +448,10 @@ class DistributedCacheSystem {
         await this.dynamoDB.update({
           TableName: process.env.DYNAMODB_CACHE_TABLE || 'perkup-cache',
           Key: { cacheKey: item.cacheKey },
-          UpdateExpression: 'SET ttl = :ttl',
+          UpdateExpression: 'SET #ttl = :ttl',
+          ExpressionAttributeNames: {
+            '#ttl': 'ttl'  // 🔥 CORRECTION: Utiliser alias pour mot réservé
+          },
           ExpressionAttributeValues: {
             ':ttl': Math.floor(Date.now() / 1000) + 60 // Expirer dans 1 minute
           }
@@ -550,10 +561,10 @@ class DistributedCacheSystem {
       }
 
       // L2: Redis
-      const redisCluster = await this.initializeRedisCluster();
-      if (redisCluster) {
+      const redisClient = await this.initializeRedisCluster();
+      if (redisClient) {
         const redisKey = this.buildKey(key, type);
-        await redisCluster.del(redisKey);
+        await redisClient.del(redisKey);
       }
 
       // L3: DynamoDB (soft delete)
@@ -561,7 +572,10 @@ class DistributedCacheSystem {
         const params = {
           TableName: process.env.DYNAMODB_CACHE_TABLE || 'perkup-cache',
           Key: { cacheKey: key },
-          UpdateExpression: 'SET ttl = :ttl',
+          UpdateExpression: 'SET #ttl = :ttl',
+          ExpressionAttributeNames: {
+            '#ttl': 'ttl'  // 🔥 CORRECTION: Utiliser alias pour mot réservé
+          },
           ExpressionAttributeValues: {
             ':ttl': Math.floor(Date.now() / 1000) + 60
           }
@@ -676,11 +690,11 @@ class DistributedCacheSystem {
 
   async checkRedisHealth() {
     try {
-      const redisCluster = await this.initializeRedisCluster();
-      if (!redisCluster) return { status: 'unavailable' };
+      const redisClient = await this.initializeRedisCluster();
+      if (!redisClient) return { status: 'unavailable' };
       
       const start = Date.now();
-      await redisCluster.ping();
+      await redisClient.ping();
       const latency = Date.now() - start;
       
       return {
@@ -717,10 +731,10 @@ class DistributedCacheSystem {
 
   // Fermeture propre
   async disconnect() {
-    if (this.redisCluster) {
-      await this.redisCluster.quit();
-      this.redisCluster = null;
-      console.log('🔄 Redis Cluster déconnecté proprement');
+    if (this.redisClient) {
+      await this.redisClient.quit();
+      this.redisClient = null;
+      console.log('🔄 Redis Simple déconnecté proprement');
     }
   }
 }
