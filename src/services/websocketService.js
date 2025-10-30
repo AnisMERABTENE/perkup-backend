@@ -200,8 +200,9 @@ class WebSocketNotificationService {
     const tasks = connections.map(async (connection) => {
       try {
         const apiGateway = new AWS.ApiGatewayManagementApi({
-          endpoint: `https://${connection.domainName}/${connection.stage}`
-        });
+          apiVersion: '2018-11-29',
+          endpoint: `${connection.domainName}/${connection.stage}`
+      });
         
         await apiGateway.postToConnection({
           ConnectionId: connection.connectionId,

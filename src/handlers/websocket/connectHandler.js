@@ -80,6 +80,7 @@ export const handler = async (event) => {
     console.log('📤 Envoi message de bienvenue...');
     
     const apiGateway = new AWS.ApiGatewayManagementApi({
+      apiVersion: '2018-11-29',
       endpoint: `${domainName}/${stage}`
     });
     
