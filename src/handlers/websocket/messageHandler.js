@@ -83,7 +83,7 @@ async function handlePing(connectionId, userId, requestContext) {
   // Répondre avec pong
   const apiGateway = new AWS.ApiGatewayManagementApi({
     apiVersion: '2018-11-29',
-    endpoint: `${requestContext.domainName}/${requestContext.stage}`
+    endpoint: `https://${requestContext.domainName}/${requestContext.stage}`
   });
   
   await apiGateway.postToConnection({

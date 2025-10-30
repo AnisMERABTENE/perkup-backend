@@ -199,10 +199,25 @@ class WebSocketNotificationService {
     
     const tasks = connections.map(async (connection) => {
       try {
+        // 🔧 CORRECTION: Utiliser l'endpoint depuis l'environnement ou la connexion
+        let endpoint;
+        
+        if (process.env.WEBSOCKET_API_ENDPOINT) {
+          // Utiliser l'endpoint depuis l'environnement (recommandé)
+          endpoint = process.env.WEBSOCKET_API_ENDPOINT;
+          console.log(`🔗 Utilisation endpoint env: ${endpoint}`);
+        } else if (connection.domainName && connection.stage) {
+          // Fallback: construire depuis les données de connexion
+          endpoint = `https://${connection.domainName}/${connection.stage}`;
+          console.log(`🔗 Utilisation endpoint connexion: ${endpoint}`);
+        } else {
+          throw new Error('Aucun endpoint WebSocket disponible');
+        }
+        
         const apiGateway = new AWS.ApiGatewayManagementApi({
           apiVersion: '2018-11-29',
-          endpoint: `${connection.domainName}/${connection.stage}`
-      });
+          endpoint: endpoint
+        });
         
         await apiGateway.postToConnection({
           ConnectionId: connection.connectionId,
@@ -214,8 +229,9 @@ class WebSocketNotificationService {
       } catch (error) {
         console.error(`❌ Erreur envoi à ${connection.connectionId}:`, error);
         
-        // Si la connexion est fermée, la supprimer
+        // Si la connexion est fermée (410 GONE), la supprimer
         if (error.statusCode === 410) {
+          console.log(`🧹 Connexion fermée détectée: ${connection.connectionId}`);
           await this.cleanupConnection(connection.connectionId);
         }
       }

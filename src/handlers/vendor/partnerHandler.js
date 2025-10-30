@@ -2,6 +2,7 @@ import Partner from '../../models/Partner.js';
 import { PartnerCache } from '../../services/cache/strategies/partnerCache.js';
 import { SubscriptionCache } from '../../services/cache/strategies/subscriptionCache.js';
 import cacheService from '../../services/cache/cacheService.js';
+import websocketService from '../../services/websocketService.js';
 
 // Fonction utilitaire pour calculer la distance
 const calculateDistance = (lat1, lng1, lat2, lng2) => {
@@ -392,6 +393,283 @@ export const getCityCoordinatesHandler = async () => {
     };
   } catch (error) {
     console.error('Erreur récupération coordonnées villes:', error);
+    throw error;
+  }
+};
+
+// 🚀 NOUVEAU: Créer un partenaire avec notification WebSocket
+export const createPartnerHandler = async (event) => {
+  const { input } = event.args;
+  const userId = event.context.user.id;
+  const userRole = event.context.user.role;
+  
+  try {
+    console.log('🚀 Création d\'un nouveau partenaire:', input.name);
+    
+    // Vérifier les permissions
+    if (userRole !== 'admin' && userRole !== 'vendor') {
+      throw new Error('Non autorisé : seuls les admins et vendeurs peuvent créer des partenaires');
+    }
+    
+    // Préparer les données du partenaire
+    const partnerData = {
+      ...input,
+      owner: userId,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    // Ajouter la géolocalisation si fournie
+    if (input.latitude && input.longitude) {
+      partnerData.location = {
+        type: 'Point',
+        coordinates: [input.longitude, input.latitude]
+      };
+    }
+    
+    // Créer le partenaire en base
+    const newPartner = await Partner.create(partnerData);
+    
+    console.log('✅ Partenaire créé:', newPartner._id);
+    
+    // 🔥 INVALIDATION CACHE
+    await PartnerCache.invalidateCache();
+    await cacheService.invalidateGroup('partners');
+    
+    // 🚀 NOTIFICATION WEBSOCKET - Nouveau partenaire créé
+    await websocketService.notifyPartnerChange(
+      newPartner._id.toString(),
+      'created',
+      {
+        id: newPartner._id.toString(),
+        name: newPartner.name,
+        category: newPartner.category,
+        city: newPartner.city,
+        discount: newPartner.discount,
+        logo: newPartner.logo
+      }
+    );
+    
+    // 🎯 NOTIFICATION PAR GÉOLOCALISATION
+    await websocketService.notifyPartnerChangeByLocation(
+      newPartner._id.toString(),
+      'created',
+      newPartner,
+      newPartner.city,
+      newPartner.category
+    );
+    
+    // 🔄 NOTIFICATION INVALIDATION CACHE
+    await websocketService.notifyCacheInvalidation([
+      'all_partners',
+      `category:${newPartner.category}`,
+      `city:${newPartner.city}`
+    ]);
+    
+    console.log('📡 Notifications WebSocket envoyées pour nouveau partenaire');
+    
+    return {
+      success: true,
+      message: 'Partenaire créé avec succès',
+      partner: {
+        id: newPartner._id.toString(),
+        name: newPartner.name,
+        category: newPartner.category,
+        address: newPartner.address,
+        city: newPartner.city,
+        discount: newPartner.discount,
+        isActive: newPartner.isActive,
+        createdAt: newPartner.createdAt.toISOString()
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ Erreur création partenaire:', error);
+    throw error;
+  }
+};
+
+// 🔄 NOUVEAU: Mettre à jour un partenaire avec notification WebSocket
+export const updatePartnerHandler = async (event) => {
+  const { id, input } = event.args;
+  const userId = event.context.user.id;
+  const userRole = event.context.user.role;
+  
+  try {
+    console.log(`🔄 Mise à jour partenaire ${id}:`, Object.keys(input));
+    
+    // Vérifier les permissions
+    if (userRole !== 'admin' && userRole !== 'vendor') {
+      throw new Error('Non autorisé : seuls les admins et vendeurs peuvent modifier des partenaires');
+    }
+    
+    // Récupérer le partenaire existant
+    const existingPartner = await Partner.findById(id);
+    if (!existingPartner) {
+      throw new Error('Partenaire introuvable');
+    }
+    
+    // Vérifier que le vendeur ne peut modifier que ses propres partenaires
+    if (userRole === 'vendor' && existingPartner.owner.toString() !== userId) {
+      throw new Error('Non autorisé : vous ne pouvez modifier que vos propres partenaires');
+    }
+    
+    // Préparer les données de mise à jour
+    const updateData = {
+      ...input,
+      updatedAt: new Date()
+    };
+    
+    // Mettre à jour la géolocalisation si fournie
+    if (input.latitude && input.longitude) {
+      updateData.location = {
+        type: 'Point',
+        coordinates: [input.longitude, input.latitude]
+      };
+    }
+    
+    // Effectuer la mise à jour
+    const updatedPartner = await Partner.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+    
+    console.log('✅ Partenaire mis à jour:', id);
+    
+    // 🔥 INVALIDATION CACHE
+    await PartnerCache.invalidatePartner(id);
+    await PartnerCache.invalidateCache();
+    await cacheService.invalidateGroup('partners');
+    
+    // 🚀 NOTIFICATION WEBSOCKET - Partenaire modifié
+    await websocketService.notifyPartnerChange(
+      id,
+      'updated',
+      {
+        id: updatedPartner._id.toString(),
+        name: updatedPartner.name,
+        category: updatedPartner.category,
+        city: updatedPartner.city,
+        discount: updatedPartner.discount,
+        changes: Object.keys(input),
+        updatedAt: updatedPartner.updatedAt.toISOString()
+      }
+    );
+    
+    // 🎯 NOTIFICATION PAR GÉOLOCALISATION (si ville/catégorie modifiées)
+    if (input.city || input.category) {
+      await websocketService.notifyPartnerChangeByLocation(
+        id,
+        'updated',
+        updatedPartner,
+        updatedPartner.city,
+        updatedPartner.category
+      );
+    }
+    
+    // 🔄 NOTIFICATION INVALIDATION CACHE
+    await websocketService.notifyCacheInvalidation([
+      `partner:${id}`,
+      'all_partners',
+      `category:${updatedPartner.category}`,
+      `city:${updatedPartner.city}`,
+      `partner_detail:${id}:*` // Invalider tous les caches de détail pour ce partenaire
+    ]);
+    
+    console.log('📡 Notifications WebSocket envoyées pour mise à jour partenaire');
+    
+    return {
+      success: true,
+      message: 'Partenaire mis à jour avec succès',
+      partner: {
+        id: updatedPartner._id.toString(),
+        name: updatedPartner.name,
+        category: updatedPartner.category,
+        address: updatedPartner.address,
+        city: updatedPartner.city,
+        discount: updatedPartner.discount,
+        isActive: updatedPartner.isActive,
+        updatedAt: updatedPartner.updatedAt.toISOString()
+      }
+    };
+    
+  } catch (error) {
+    console.error(`❌ Erreur mise à jour partenaire ${id}:`, error);
+    throw error;
+  }
+};
+
+// 🗑️ NOUVEAU: Supprimer un partenaire avec notification WebSocket
+export const deletePartnerHandler = async (event) => {
+  const { id } = event.args;
+  const userId = event.context.user.id;
+  const userRole = event.context.user.role;
+  
+  try {
+    console.log(`🗑️ Suppression partenaire ${id}`);
+    
+    // Vérifier les permissions (seuls les admins peuvent supprimer)
+    if (userRole !== 'admin') {
+      throw new Error('Non autorisé : seuls les admins peuvent supprimer des partenaires');
+    }
+    
+    // Récupérer le partenaire avant suppression
+    const partner = await Partner.findById(id);
+    if (!partner) {
+      throw new Error('Partenaire introuvable');
+    }
+    
+    // Supprimer le partenaire
+    await Partner.findByIdAndDelete(id);
+    
+    console.log('✅ Partenaire supprimé:', id);
+    
+    // 🔥 INVALIDATION CACHE COMPLÈTE
+    await PartnerCache.invalidatePartner(id);
+    await PartnerCache.invalidateCache();
+    await cacheService.invalidateGroup('partners');
+    
+    // 🚀 NOTIFICATION WEBSOCKET - Partenaire supprimé
+    await websocketService.notifyPartnerChange(
+      id,
+      'deleted',
+      {
+        id: id,
+        name: partner.name,
+        category: partner.category,
+        city: partner.city,
+        deletedAt: new Date().toISOString()
+      }
+    );
+    
+    // 🎯 NOTIFICATION PAR GÉOLOCALISATION
+    await websocketService.notifyPartnerChangeByLocation(
+      id,
+      'deleted',
+      { id, name: partner.name },
+      partner.city,
+      partner.category
+    );
+    
+    // 🔄 NOTIFICATION INVALIDATION CACHE
+    await websocketService.notifyCacheInvalidation([
+      `partner:${id}`,
+      'all_partners',
+      `category:${partner.category}`,
+      `city:${partner.city}`
+    ]);
+    
+    console.log('📡 Notifications WebSocket envoyées pour suppression partenaire');
+    
+    return {
+      success: true,
+      message: `Partenaire "${partner.name}" supprimé avec succès`
+    };
+    
+  } catch (error) {
+    console.error(`❌ Erreur suppression partenaire ${id}:`, error);
     throw error;
   }
 };

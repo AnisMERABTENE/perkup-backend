@@ -45,8 +45,10 @@ export const handler = async (event) => {
     try {
       decoded = verifyToken(token);
       console.log('✅ Token vérifié:', decoded.id);
+      console.log('🔍 Token payload:', JSON.stringify(decoded, null, 2));
     } catch (error) {
       console.error('❌ Token invalide:', error.message);
+      console.error('🔍 Token reçu (tronqué):', token.substring(0, 50) + '...');
       return {
         statusCode: 401,
         body: JSON.stringify({ message: 'Token invalide' })
@@ -81,7 +83,7 @@ export const handler = async (event) => {
     
     const apiGateway = new AWS.ApiGatewayManagementApi({
       apiVersion: '2018-11-29',
-      endpoint: `${domainName}/${stage}`
+      endpoint: `https://${domainName}/${stage}`
     });
     
     const welcomeMessage = {

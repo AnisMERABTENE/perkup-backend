@@ -117,6 +117,45 @@ const partnerTypeDefs = `
     cities: [String!]!
   }
 
+  # Partner Input Types
+  input PartnerInput {
+    name: String!
+    category: String!
+    address: String!
+    city: String!
+    zipCode: String!
+    phone: String!
+    discount: Int!
+    description: String
+    logo: String
+    website: String
+    latitude: Float
+    longitude: Float
+  }
+
+  input PartnerUpdateInput {
+    name: String
+    category: String
+    address: String
+    city: String
+    zipCode: String
+    phone: String
+    discount: Int
+    description: String
+    logo: String
+    website: String
+    latitude: Float
+    longitude: Float
+    isActive: Boolean
+  }
+
+  # Partner Response Types
+  type PartnerMutationResponse {
+    success: Boolean!
+    message: String!
+    partner: Partner
+  }
+
   extend type Query {
     searchPartners(lat: Float, lng: Float, radius: Float, category: String, city: String, name: String, limit: Int): PartnerSearchResponse!
     getPartners(category: String): PartnerListResponse!
@@ -124,6 +163,12 @@ const partnerTypeDefs = `
     getCategories: CategoryResponse!
     getCities: CitiesResponse!
     getCityCoordinates: CityCoordinatesResponse!
+  }
+
+  extend type Mutation {
+    createPartner(input: PartnerInput!): PartnerMutationResponse!
+    updatePartner(id: ID!, input: PartnerUpdateInput!): PartnerMutationResponse!
+    deletePartner(id: ID!): PartnerMutationResponse!
   }
 `;
 

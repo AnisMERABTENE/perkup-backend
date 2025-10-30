@@ -26,6 +26,11 @@ provider:
     EMAIL_SOURCE: ${env:EMAIL_SOURCE}
     SES_REGION: ${env:SES_REGION}
     
+    # WebSocket Configuration
+    WEBSOCKET_CONNECTIONS_TABLE: "perkup-websocket-connections"
+    WEBSOCKET_API_ENDPOINT:
+      Fn::Sub: "https://${WebsocketsApi}.execute-api.${AWS::Region}.amazonaws.com/${opt:stage, 'dev'}"
+    
     # Cloudinary Configuration
     CLOUDINARY_CLOUD_NAME: ${env:CLOUDINARY_CLOUD_NAME}
     CLOUDINARY_API_KEY: ${env:CLOUDINARY_API_KEY}

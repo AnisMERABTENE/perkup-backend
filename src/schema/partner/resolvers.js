@@ -1,4 +1,14 @@
-import { searchPartnersHandler, getPartnersHandler, getPartnerHandler, getCategoriesHandler, getCitiesHandler, getCityCoordinatesHandler } from '../../handlers/vendor/partnerHandler.js';
+import { 
+  searchPartnersHandler, 
+  getPartnersHandler, 
+  getPartnerHandler, 
+  getCategoriesHandler, 
+  getCitiesHandler, 
+  getCityCoordinatesHandler,
+  createPartnerHandler,
+  updatePartnerHandler,
+  deletePartnerHandler
+} from '../../handlers/vendor/partnerHandler.js';
 import { withAuth } from '../../middlewares/checkSubscription.js';
 
 const partnerResolvers = {
@@ -28,6 +38,23 @@ const partnerResolvers = {
     
     getCityCoordinates: withAuth(async () => {
       return await getCityCoordinatesHandler();
+    })
+  },
+  
+  Mutation: {
+    createPartner: withAuth(async (_, args, context) => {
+      const event = { args, context };
+      return await createPartnerHandler(event);
+    }),
+    
+    updatePartner: withAuth(async (_, args, context) => {
+      const event = { args, context };
+      return await updatePartnerHandler(event);
+    }),
+    
+    deletePartner: withAuth(async (_, args, context) => {
+      const event = { args, context };
+      return await deletePartnerHandler(event);
     })
   }
 };
